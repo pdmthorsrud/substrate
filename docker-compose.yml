@@ -14,13 +14,19 @@ services:
     # Interactive shell
     stdin_open: true
     tty: true
-    command: /bin/bash
+    command: /usr/local/bin/start-vnc.sh
     # Load environment variables from .env file
     env_file:
       - .env
     environment:
-      # Set to "true" for headless mode, "false" for headed mode (not supported without Xvfb)
-      - HEADLESS=true
+      # Set to "false" for headed mode (visible via VNC)
+      - HEADLESS=false
+      - DISPLAY=:99
+    ports:
+      # VNC server port
+      - "5900:5900"
+      # noVNC web interface port
+      - "6080:6080"
     volumes:
       # Mount screenshots directory to access screenshots from host
       - ./screenshots:/app/screenshots

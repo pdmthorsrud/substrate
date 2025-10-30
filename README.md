@@ -9,6 +9,8 @@ A Docker-based browser automation system using Playwright and Python. This is a 
 - 🐍 Python 3 with all necessary dependencies
 - 📸 Screenshot capture functionality
 - 🖥️ Headless mode by default (optimized for Docker)
+- 👀 **VNC support** - Watch the browser in real-time via web browser at http://localhost:6080
+- 🤖 **Gemini Computer Use API integration** - AI-controlled browser automation
 - 🔄 Easy setup with docker-compose
 - ✅ Works on both Linux and macOS
 - ⚡ Proper Docker configuration following Playwright best practices
@@ -76,28 +78,38 @@ ls -lh screenshots/
 
 ## Configuration Options
 
+### Watch the Browser with VNC
+
+**Want to see the browser in action?** This project includes VNC support so you can watch the browser in real-time!
+
+See **[VNC.md](VNC.md)** for complete instructions.
+
+**Quick Start:**
+1. Rebuild: `docker-compose build`
+2. Start: `docker-compose up -d`
+3. Open browser: http://localhost:6080
+4. Run script: `docker exec -it playwright-browser python3 gemini_computer_use.py "open nrk.no"`
+5. Watch the magic happen in your browser!
+
 ### Headless Mode
 
-By default, the browser runs in **headless mode** (no visible browser window), which is the recommended setting for Docker environments.
+The container can run in two modes:
 
-To disable headless mode (not recommended in Docker without additional setup), set the `HEADLESS` environment variable:
-
-```bash
-# Using docker-compose (edit docker-compose.yml)
+**Headed Mode (VNC Enabled)** - See the browser
+```yaml
+# In docker-compose.yml
 environment:
   - HEADLESS=false
-
-# Or using Docker directly
-docker run --rm \
-  --init \
-  --ipc=host \
-  -e HEADLESS=false \
-  -v $(pwd)/screenshots:/app/screenshots \
-  --shm-size=2gb \
-  playwright-automation:latest
 ```
+Access at http://localhost:6080 to watch the browser
 
-**Note:** Headed mode (HEADLESS=false) requires additional setup with Xvfb or similar X11 virtual display server, which is not included in this basic setup.
+**Headless Mode (No VNC)** - Faster, no UI
+```yaml
+# In docker-compose.yml
+environment:
+  - HEADLESS=true
+```
+Browser runs invisibly (faster, less resource usage)
 
 ### Modifying the Test Script
 
