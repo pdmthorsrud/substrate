@@ -42,7 +42,10 @@ Waits for 5 seconds
 
 count_test:
 e.g. count_test: run the counter
-Runs a counting test from 1 to 10 in a Docker container with real-time streaming output
+Runs a counting test from 1 to 30 in a Docker container with real-time streaming output.
+For long-running tasks, you will receive periodic checkpoint updates every 3 seconds.
+At each checkpoint, you'll see the partial output and must decide to 'continue' or 'stop'.
+Respond with just the word 'continue' if the task should keep running, or 'stop' to terminate it early.
 
 Example session:
 
@@ -175,36 +178,36 @@ def wait(input_text: str) -> str:
     return "Waited for 5 seconds"
 
 
-def count_test(input_text: str) -> str:
+def count_test(input_text: str, agent=None) -> str:
     """
-    Run a counting test from 1 to 10 in a Docker container with streaming output
-    Returns after 4 seconds with whatever content has been streamed so far
+    Run a counting test from 1 to 30 in a Docker container with streaming output
+    Uses periodic checkpoints every 3 seconds to ask the agent if it should continue
 
     Args:
         input_text: Any input text (ignored, just for consistency)
+        agent: Optional Agent instance for checkpoint interactions
 
     Returns:
-        The output collected within 4 seconds
+        The output collected (either complete or stopped by agent decision)
     """
     try:
         # Connect to Docker
         client = docker.from_env()
 
         # Try to find a running container
-        # First, try to find a container with 'substrate' or 'playwright' in the name
         containers = client.containers.list()
 
         if not containers:
             return "Error: No running Docker containers found"
 
-        # Use the first running container (you can modify this logic to select a specific container)
+        # Use the first running container
         container = containers[0]
 
         print(f"\n  → Using container: {container.name} ({container.id[:12]})")
-        print(f"  → Starting count test with streaming output (4 second timeout)...\n")
+        print(f"  → Starting count test with streaming output and 3-second checkpoints...\n")
 
-        # Execute the counting command with streaming
-        command = "python -c \"import time; [print(f'Count: {i}', flush=True) or time.sleep(1) for i in range(1, 11)]\""
+        # Execute the counting command with streaming (count to 30)
+        command = "python -c \"import time; [print(f'Count: {i}', flush=True) or time.sleep(1) for i in range(1, 31)]\""
 
         exec_result = container.exec_run(
             command,
@@ -212,29 +215,60 @@ def count_test(input_text: str) -> str:
             demux=False
         )
 
-        # Collect and print output as it streams, but only for 4 seconds
+        # Collect and print output as it streams with periodic checkpoints
         output_lines = []
         start_time = time.time()
-        timeout = 4.0  # 4 seconds
+        last_checkpoint_time = start_time
+        checkpoint_interval = 3.0  # 3 seconds
+        checkpoint_count = 0
 
         for chunk in exec_result.output:
-            # Check if we've exceeded the timeout
-            elapsed = time.time() - start_time
-            if elapsed >= timeout:
-                print(f"\n  → Timeout reached after {elapsed:.1f} seconds, returning partial output\n")
-                break
+            current_time = time.time()
 
+            # Decode and collect the output
             line = chunk.decode('utf-8').strip()
             if line:
                 print(f"  {line}")
                 output_lines.append(line)
 
-        complete_output = "\n".join(output_lines)
+            # Check if it's time for a checkpoint
+            elapsed_since_checkpoint = current_time - last_checkpoint_time
+            if agent and elapsed_since_checkpoint >= checkpoint_interval:
+                checkpoint_count += 1
+                elapsed_total = current_time - start_time
 
-        if time.time() - start_time >= timeout:
-            return f"Count test partial output (stopped after 4 seconds):\n{complete_output}"
-        else:
-            return f"Count test completed. Output:\n{complete_output}"
+                # Prepare checkpoint message
+                current_output = "\n".join(output_lines)
+                checkpoint_msg = f"\n{'='*60}\n"
+                checkpoint_msg += f"CHECKPOINT #{checkpoint_count} (at {elapsed_total:.1f}s)\n"
+                checkpoint_msg += f"{'='*60}\n"
+                checkpoint_msg += f"Partial output so far:\n{current_output}\n"
+                checkpoint_msg += f"{'='*60}\n"
+
+                print(checkpoint_msg)
+
+                # Add checkpoint to conversation history and ask agent
+                observation_prompt = f"Observation: Task is still running (checkpoint #{checkpoint_count} at {elapsed_total:.1f}s). Output so far:\n{current_output}\n\nBased on the output so far, should I continue waiting or stop the task? Respond with just 'continue' or 'stop'."
+
+                # Call agent with checkpoint
+                response = agent(observation_prompt)
+
+                print(f"\n  → Agent response: {response}\n")
+
+                # Check if agent wants to stop
+                if "stop" in response.lower() and "continue" not in response.lower():
+                    print(f"\n  → Agent requested stop at {elapsed_total:.1f}s\n")
+                    complete_output = "\n".join(output_lines)
+                    return f"Count test stopped by agent decision at checkpoint #{checkpoint_count} ({elapsed_total:.1f}s):\n{complete_output}"
+
+                # Update checkpoint time
+                last_checkpoint_time = current_time
+
+        # Task completed naturally
+        complete_output = "\n".join(output_lines)
+        elapsed_total = time.time() - start_time
+        print(f"\n  → Count test completed naturally after {elapsed_total:.1f}s\n")
+        return f"Count test completed successfully (took {elapsed_total:.1f}s):\n{complete_output}"
 
     except docker.errors.DockerException as e:
         return f"Error connecting to Docker: {str(e)}"
@@ -317,7 +351,11 @@ def query(question: str, api_key: str, max_turns: int = 10, verbose: bool = True
                     print(f"  ✗ {error_msg}\n")
                 next_prompt = f"Observation: {error_msg}"
             else:
-                observation = TOOLS[action_name](action_input)
+                # Pass agent instance to count_test for checkpoint interactions
+                if action_name == "count_test":
+                    observation = TOOLS[action_name](action_input, agent=agent)
+                else:
+                    observation = TOOLS[action_name](action_input)
                 if verbose:
                     print(f"  ✓ Observation: {observation}\n")
                 next_prompt = f"Observation: {observation}"
