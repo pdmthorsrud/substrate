@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  playwright-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: playwright-automation:latest
+    container_name: playwright-browser
+    # Recommended by Playwright: avoid special treatment for PID=1
+    init: true
+    # Recommended by Playwright: prevent Chromium from running out of memory
+    ipc: host
+    environment:
+      # Set to "true" for headless mode, "false" for headed mode (not supported without Xvfb)
+      - HEADLESS=true
+    volumes:
+      # Mount screenshots directory to access screenshots from host
+      - ./screenshots:/app/screenshots
+      # Mount the Python script for easy development/testing
+      - ./test_navigation.py:/app/test_navigation.py
+    # Shared memory size (important for Chrome to avoid crashes)
+    shm_size: 2gb
+    # Optional: Add restart policy
+    restart: "no"
+    # Optional: Add cap_add for local development if needed
+    # cap_add:
+    #   - SYS_ADMIN
+    # Optional: Add network configuration if needed
+    # networks:
+    #   - playwright-network
+
+# Optional: Define networks
+# networks:
+#   playwright-network:
+#     driver: bridge

@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+.docker-state/
+
+# Claude Code
+.claude/
+
+# Screenshots (generated files)
+screenshots/*.png
+screenshots/*.jpg
+screenshots/*.jpeg
+
+# Keep the screenshots directory structure
+!screenshots/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.*
+!.env.example
