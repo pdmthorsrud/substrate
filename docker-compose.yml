@@ -11,14 +11,23 @@ services:
     init: true
     # Recommended by Playwright: prevent Chromium from running out of memory
     ipc: host
+    # Interactive shell
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+    # Load environment variables from .env file
+    env_file:
+      - .env
     environment:
       # Set to "true" for headless mode, "false" for headed mode (not supported without Xvfb)
       - HEADLESS=true
     volumes:
       # Mount screenshots directory to access screenshots from host
       - ./screenshots:/app/screenshots
-      # Mount the Python script for easy development/testing
+      # Mount Python scripts for easy development/testing
       - ./test_navigation.py:/app/test_navigation.py
+      - ./test_gemini_api.py:/app/test_gemini_api.py
+      - ./gemini_computer_use.py:/app/gemini_computer_use.py
     # Shared memory size (important for Chrome to avoid crashes)
     shm_size: 2gb
     # Optional: Add restart policy

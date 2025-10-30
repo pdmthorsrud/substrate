@@ -29,5 +29,5 @@ COPY . .
 # Create a directory for screenshots
 RUN mkdir -p /app/screenshots
 
-# Default command - run the Python script directly
-CMD ["python3", "test_navigation.py"]
+# Default command - start interactive bash shell
+CMD ["/bin/bash"]
