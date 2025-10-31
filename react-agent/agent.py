@@ -481,6 +481,115 @@ def query(question: str, api_key: str, max_turns: int = 10, verbose: bool = True
     return "Error: Maximum turns reached without getting an answer"
 
 
+def chat_loop(api_key: str, max_turns: int = 10):
+    """
+    Run an interactive chat loop with the ReAct agent
+
+    Args:
+        api_key: Google API key
+        max_turns: Maximum number of reasoning iterations per user message
+    """
+    print("\n" + "="*60)
+    print("ReAct Agent - Interactive Chat Mode")
+    print("Using Google Gemini")
+    print("="*60)
+    print("\nType 'exit', 'quit', or press Ctrl+C to end the session")
+    print("="*60 + "\n")
+
+    # Create agent once - this maintains conversation history for entire session
+    agent = Agent(SYSTEM_PROMPT, api_key)
+
+    try:
+        while True:
+            # Get user input
+            try:
+                user_input = input("\n\033[1;34mYou:\033[0m ").strip()
+            except EOFError:
+                # Handle Ctrl+D
+                print("\n\nGoodbye!")
+                break
+
+            # Check for exit commands
+            if user_input.lower() in ['exit', 'quit', 'q', 'bye']:
+                print("\n\033[1;32mAgent:\033[0m Goodbye! Have a great day!")
+                break
+
+            # Skip empty input
+            if not user_input:
+                continue
+
+            print(f"\n\033[1;32mAgent:\033[0m Processing...\n")
+
+            # Process the user's message with the agent
+            next_prompt = user_input
+            counter = 0
+            agent_done = False
+
+            while counter < max_turns and not agent_done:
+                counter += 1
+
+                # Get agent's response
+                result = agent(next_prompt)
+
+                print(f"  Turn {counter}:")
+                print(f"  {result}")
+                print()
+
+                # Check if we have an answer (agent is done)
+                if "Answer:" in result:
+                    # Extract and display the answer
+                    answer_match = re.search(r"Answer:\s*(.+)", result, re.DOTALL)
+                    if answer_match:
+                        answer = answer_match.group(1).strip()
+                        print(f"\033[1;32mAgent:\033[0m {answer}\n")
+                    agent_done = True
+                    break
+
+                # Look for actions to execute
+                action_pattern = r"Action:\s*(\w+):\s*(.+?)(?:\n|$)"
+                action_match = re.search(action_pattern, result)
+
+                if action_match:
+                    action_name = action_match.group(1).strip()
+                    action_input = action_match.group(2).strip()
+
+                    print(f"  → Executing: {action_name}({action_input})")
+
+                    # Execute the action
+                    if action_name not in TOOLS:
+                        error_msg = f"Error: Unknown action '{action_name}'. Available: {list(TOOLS.keys())}"
+                        print(f"  ✗ {error_msg}\n")
+                        next_prompt = f"Observation: {error_msg}"
+                    else:
+                        # Pass agent instance to tools that support checkpoint interactions
+                        if action_name in ["count_test", "browser_automation"]:
+                            observation = TOOLS[action_name](action_input, agent=agent)
+                        else:
+                            observation = TOOLS[action_name](action_input)
+                        print(f"  ✓ Observation: {observation}\n")
+                        next_prompt = f"Observation: {observation}"
+                else:
+                    # No action found and no answer - agent might be confused
+                    if "PAUSE" in result:
+                        next_prompt = "Observation: No action was specified. Please specify an action."
+                    else:
+                        # Agent might have finished without proper format
+                        print(f"\033[1;32mAgent:\033[0m {result}\n")
+                        agent_done = True
+                        break
+
+            if counter >= max_turns and not agent_done:
+                print(f"\033[1;33mAgent:\033[0m I've reached my maximum thinking steps. Could you rephrase or simplify your request?\n")
+
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully
+        print("\n\n\033[1;32mAgent:\033[0m Session interrupted. Goodbye!")
+
+    print("\n" + "="*60)
+    print("Chat session ended")
+    print("="*60 + "\n")
+
+
 def main():
     """Main function to run the ReAct agent"""
 
@@ -492,30 +601,19 @@ def main():
         print("  export GOOGLE_API_KEY='your-api-key-here'\n")
         sys.exit(1)
 
-    print("\n" + "="*60)
-    print("ReAct Agent - Reasoning + Acting Pattern")
-    print("Using Google Gemini")
-    print("="*60)
-
-    # Example queries
-    examples = [
-        "What is 15 + 27?",
-        "What is 100 + 250?",
-        "Calculate 42 + 58",
-    ]
-
     if len(sys.argv) > 1:
-        # Use question from command line
+        # Single-shot mode: Use question from command line
+        print("\n" + "="*60)
+        print("ReAct Agent - Single Query Mode")
+        print("Using Google Gemini")
+        print("="*60)
+
         question = " ".join(sys.argv[1:])
         answer = query(question, api_key, verbose=True)
+        print("\n✅ Done!\n")
     else:
-        # Run examples
-        print("\nRunning example queries...\n")
-        for question in examples:
-            answer = query(question, api_key, verbose=True)
-            input("Press Enter to continue to next example...")
-
-    print("\n✅ Done!\n")
+        # Interactive chat mode: No command line args
+        chat_loop(api_key)
 
 
 if __name__ == "__main__":
