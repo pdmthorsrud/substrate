@@ -72,25 +72,28 @@ def take_screenshot(page: Page, step_number: int) -> tuple[bytes, str]:
 
     log(f"Screenshot saved: {filename}")
 
-    # Compress screenshot to reduce token usage
-    # Open the screenshot with PIL
-    img = Image.open(BytesIO(screenshot_bytes))
+    # # Compress screenshot to reduce token usage
+    # # Open the screenshot with PIL
+    # img = Image.open(BytesIO(screenshot_bytes))
 
-    # Resize to smaller dimensions (512x288 from 1280x720 = 40% of original)
-    # This reduces tokens by ~85%
-    new_size = (512, 288)
-    img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
+    # # Resize to smaller dimensions (512x288 from 1280x720 = 40% of original)
+    # # This reduces tokens by ~85%
+    # new_size = (512, 288)
+    # img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
 
-    # Convert to JPEG with quality 75 to further reduce size
-    output = BytesIO()
-    img_resized.save(output, format='JPEG', quality=75, optimize=True)
-    compressed_bytes = output.getvalue()
+    # # Convert to JPEG with quality 75 to further reduce size
+    # output = BytesIO()
+    # img_resized.save(output, format='JPEG', quality=75, optimize=True)
+    # compressed_bytes = output.getvalue()
 
-    original_kb = len(screenshot_bytes) / 1024
-    compressed_kb = len(compressed_bytes) / 1024
-    log(f"Screenshot compressed: {original_kb:.1f}KB -> {compressed_kb:.1f}KB ({compressed_kb/original_kb*100:.1f}%)")
+    # original_kb = len(screenshot_bytes) / 1024
+    # compressed_kb = len(compressed_bytes) / 1024
+    # log(f"Screenshot compressed: {original_kb:.1f}KB -> {compressed_kb:.1f}KB ({compressed_kb/original_kb*100:.1f}%)")
 
-    return compressed_bytes, "image/jpeg"
+    # return compressed_bytes, "image/jpeg"
+
+    # Return original uncompressed screenshot for testing
+    return screenshot_bytes, "image/png"
 
 
 def execute_open_web_browser(page: Page, args: dict):
@@ -220,6 +223,35 @@ def main():
                 step += 1
                 log("=" * 60)
                 log(f"STEP {step}: Sending request to Gemini...")
+
+                # Log conversation history details before sending
+                log(f"Conversation history contains {len(conversation_history)} messages")
+                total_text_chars = 0
+                total_images = 0
+                for i, content in enumerate(conversation_history):
+                    role = content.role
+                    parts_info = []
+                    for part in content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            text_len = len(part.text)
+                            total_text_chars += text_len
+                            parts_info.append(f"text({text_len} chars)")
+                        elif hasattr(part, 'function_response') and part.function_response:
+                            fr = part.function_response
+                            parts_info.append(f"function_response({fr.name})")
+                            if fr.response and 'screenshot' in fr.response:
+                                screenshot_data = fr.response['screenshot'].get('data', '')
+                                screenshot_kb = len(screenshot_data) / 1024
+                                total_images += 1
+                                parts_info.append(f"screenshot({screenshot_kb:.1f}KB base64)")
+                        elif hasattr(part, 'function_call') and part.function_call:
+                            fc = part.function_call
+                            parts_info.append(f"function_call({fc.name})")
+
+                    log(f"  Message {i+1} [{role}]: {', '.join(parts_info)}")
+
+                log(f"Total text: {total_text_chars} chars, Total images: {total_images}")
+                log(f"Estimated tokens: ~{total_text_chars / 4 + total_images * 20000} (rough estimate)")
 
                 # Send request to Gemini with conversation history
                 response = client.models.generate_content(
