@@ -47,6 +47,14 @@ For long-running tasks, you will receive periodic checkpoint updates every 3 sec
 At each checkpoint, you'll see the partial output and must decide to 'continue' or 'stop'.
 Respond with just the word 'continue' if the task should keep running, or 'stop' to terminate it early.
 
+browser_automation:
+e.g. browser_automation: Go to nrk.no and find the weather forecast
+Controls a web browser via Gemini Computer Use running in a Docker container.
+Can navigate websites, click elements, fill forms, extract information, take screenshots, etc.
+Executes inside a playwright-browser container with streaming output and 3-second checkpoints.
+At each checkpoint, you'll see partial output and must decide to 'continue' or 'stop'.
+Use this when you need to interact with websites or gather information from the web.
+
 Example session:
 
 Question: What is 10 + 25?
@@ -276,11 +284,114 @@ def count_test(input_text: str, agent=None) -> str:
         return f"Error running count test: {str(e)}"
 
 
+def browser_automation(instruction: str, agent=None) -> str:
+    """
+    Control a web browser via Gemini Computer Use running in a Docker container
+    Uses periodic checkpoints every 3 seconds to ask the agent if it should continue
+
+    Args:
+        instruction: What the browser should do (e.g., "Go to nrk.no and find the weather")
+        agent: Optional Agent instance for checkpoint interactions
+
+    Returns:
+        The output from the browser automation task
+    """
+    try:
+        # Connect to Docker
+        client = docker.from_env()
+
+        # Find the playwright-browser container
+        containers = client.containers.list()
+
+        playwright_container = None
+        for container in containers:
+            if 'playwright' in container.name.lower() or 'browser' in container.name.lower():
+                playwright_container = container
+                break
+
+        if not playwright_container:
+            return "Error: No playwright-browser container found. Please ensure the container is running."
+
+        print(f"\n  → Using container: {playwright_container.name} ({playwright_container.id[:12]})")
+        print(f"  → Starting browser automation with 3-second checkpoints...")
+        print(f"  → Instruction: {instruction}\n")
+
+        # Execute gemini_computer_use.py with the instruction
+        command = f'python /app/gemini_computer_use.py "{instruction}"'
+
+        exec_result = playwright_container.exec_run(
+            command,
+            stream=True,
+            demux=False
+        )
+
+        # Collect and print output as it streams with periodic checkpoints
+        output_lines = []
+        start_time = time.time()
+        last_checkpoint_time = start_time
+        checkpoint_interval = 3.0  # 3 seconds
+        checkpoint_count = 0
+
+        for chunk in exec_result.output:
+            current_time = time.time()
+
+            # Decode and collect the output
+            line = chunk.decode('utf-8').strip()
+            if line:
+                print(f"  {line}")
+                output_lines.append(line)
+
+            # Check if it's time for a checkpoint
+            elapsed_since_checkpoint = current_time - last_checkpoint_time
+            if agent and elapsed_since_checkpoint >= checkpoint_interval:
+                checkpoint_count += 1
+                elapsed_total = current_time - start_time
+
+                # Prepare checkpoint message
+                current_output = "\n".join(output_lines)
+                checkpoint_msg = f"\n{'='*60}\n"
+                checkpoint_msg += f"CHECKPOINT #{checkpoint_count} (at {elapsed_total:.1f}s)\n"
+                checkpoint_msg += f"{'='*60}\n"
+                checkpoint_msg += f"Browser automation output so far:\n{current_output}\n"
+                checkpoint_msg += f"{'='*60}\n"
+
+                print(checkpoint_msg)
+
+                # Add checkpoint to conversation history and ask agent
+                observation_prompt = f"Observation: Browser automation task is still running (checkpoint #{checkpoint_count} at {elapsed_total:.1f}s). Output so far:\n{current_output}\n\nBased on the output so far, should I continue waiting or stop the task? Respond with just 'continue' or 'stop'."
+
+                # Call agent with checkpoint
+                response = agent(observation_prompt)
+
+                print(f"\n  → Agent response: {response}\n")
+
+                # Check if agent wants to stop
+                if "stop" in response.lower() and "continue" not in response.lower():
+                    print(f"\n  → Agent requested stop at {elapsed_total:.1f}s\n")
+                    complete_output = "\n".join(output_lines)
+                    return f"Browser automation stopped by agent decision at checkpoint #{checkpoint_count} ({elapsed_total:.1f}s):\n{complete_output}"
+
+                # Update checkpoint time
+                last_checkpoint_time = current_time
+
+        # Task completed naturally
+        complete_output = "\n".join(output_lines)
+        elapsed_total = time.time() - start_time
+        print(f"\n  → Browser automation completed after {elapsed_total:.1f}s\n")
+        return f"Browser automation completed successfully (took {elapsed_total:.1f}s):\n{complete_output}"
+
+    except docker.errors.DockerException as e:
+        return f"Error connecting to Docker: {str(e)}"
+    except Exception as e:
+        return f"Error running browser automation: {str(e)}"
+
+
 # Available tools
 TOOLS: Dict[str, Callable] = {
     "calculate": calculate,
     "wait": wait,
     "count_test": count_test,
+    "browser_automation": browser_automation,
 }
 
 
@@ -351,8 +462,8 @@ def query(question: str, api_key: str, max_turns: int = 10, verbose: bool = True
                     print(f"  ✗ {error_msg}\n")
                 next_prompt = f"Observation: {error_msg}"
             else:
-                # Pass agent instance to count_test for checkpoint interactions
-                if action_name == "count_test":
+                # Pass agent instance to tools that support checkpoint interactions
+                if action_name in ["count_test", "browser_automation"]:
                     observation = TOOLS[action_name](action_input, agent=agent)
                 else:
                     observation = TOOLS[action_name](action_input)
