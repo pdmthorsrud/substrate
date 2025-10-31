@@ -17,10 +17,12 @@ import sys
 import base64
 from datetime import datetime
 from pathlib import Path
+from io import BytesIO
 
 from playwright.sync_api import sync_playwright, Page, Browser
 from google import genai
 from google.genai import types
+from PIL import Image
 
 
 def log(message: str):
@@ -47,15 +49,18 @@ def initialize_browser(playwright):
     return browser, page
 
 
-def take_screenshot(page: Page, step_number: int) -> bytes:
+def take_screenshot(page: Page, step_number: int) -> tuple[bytes, str]:
     """
-    Take a screenshot and return the PNG bytes
-    Also saves to disk for debugging
+    Take a screenshot, compress it, and return the bytes and mime type
+    Also saves original to disk for debugging
+
+    Returns:
+        tuple: (compressed_screenshot_bytes, mime_type)
     """
     # Take screenshot as bytes
     screenshot_bytes = page.screenshot()
 
-    # Also save to disk for debugging
+    # Save original to disk for debugging
     screenshots_dir = Path("/app/screenshots")
     screenshots_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -67,7 +72,25 @@ def take_screenshot(page: Page, step_number: int) -> bytes:
 
     log(f"Screenshot saved: {filename}")
 
-    return screenshot_bytes
+    # Compress screenshot to reduce token usage
+    # Open the screenshot with PIL
+    img = Image.open(BytesIO(screenshot_bytes))
+
+    # Resize to smaller dimensions (512x288 from 1280x720 = 40% of original)
+    # This reduces tokens by ~85%
+    new_size = (512, 288)
+    img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
+
+    # Convert to JPEG with quality 75 to further reduce size
+    output = BytesIO()
+    img_resized.save(output, format='JPEG', quality=75, optimize=True)
+    compressed_bytes = output.getvalue()
+
+    original_kb = len(screenshot_bytes) / 1024
+    compressed_kb = len(compressed_bytes) / 1024
+    log(f"Screenshot compressed: {original_kb:.1f}KB -> {compressed_kb:.1f}KB ({compressed_kb/original_kb*100:.1f}%)")
+
+    return compressed_bytes, "image/jpeg"
 
 
 def execute_open_web_browser(page: Page, args: dict):
@@ -220,7 +243,7 @@ def main():
 
                     # Take screenshot of new state
                     log("Taking screenshot of current state...")
-                    screenshot_bytes = take_screenshot(page, step)
+                    screenshot_bytes, mime_type = take_screenshot(page, step)
 
                     # Encode screenshot as base64 for sending to Gemini
                     screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
@@ -243,7 +266,7 @@ def main():
                         response={
                             "url": current_url,
                             "screenshot": {
-                                "mime_type": "image/png",
+                                "mime_type": mime_type,
                                 "data": screenshot_base64
                             }
                         }
