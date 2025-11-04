@@ -1,0 +1,677 @@
+PROJECT CONTEXT: GEMINI COMPUTER USE WITH PLAYWRIGHT BROWSER AUTOMATION
+
+==============================================================================
+OVERVIEW
+==============================================================================
+
+This is a Docker-based browser automation system that integrates Google's Gemini Computer Use API with Playwright for AI-controlled web browsing. The system runs a Chromium browser inside a Docker container and allows Gemini AI to control it through function calls, creating an autonomous agent that can navigate the web, take screenshots, and perform tasks based on natural language instructions.
+
+==============================================================================
+KEY COMPONENTS
+==============================================================================
+
+1. DOCKER CONTAINER
+   - Based on official Playwright image (mcr.microsoft.com/playwright:v1.48.0-jammy)
+   - Includes Chromium browser pre-installed
+   - Python 3 environment with all dependencies
+   - VNC server support for watching the browser in real-time
+   - noVNC for browser-based VNC access at http://localhost:6080
+
+2. GEMINI COMPUTER USE API
+   - Uses model: gemini-2.5-computer-use-preview-10-2025
+   - Configured for ENVIRONMENT_BROWSER mode
+   - Returns function calls that control the browser
+   - Receives screenshots and URLs as feedback
+   - Operates in a continuous loop until task completion
+
+3. PLAYWRIGHT BROWSER AUTOMATION
+   - Chromium browser with viewport 1280x720
+   - Can run in headless or headed mode (with VNC)
+   - Takes screenshots after each action
+   - Executes navigation commands from Gemini
+
+==============================================================================
+ARCHITECTURE & WORKFLOW
+==============================================================================
+
+CONVERSATION LOOP:
+1. User provides initial prompt (e.g., "open nrk.no")
+2. Script sends prompt + conversation history to Gemini API
+3. Gemini responds with function call (e.g., navigate to URL)
+4. Script executes function using Playwright
+5. Script takes screenshot and gets current URL
+6. Screenshot + URL sent back to Gemini as function response
+7. Loop repeats until Gemini returns no more function calls (task complete)
+
+CURRENTLY IMPLEMENTED FUNCTIONS:
+- open_web_browser: Navigates to about:blank
+- navigate: Navigates to specified URL with 30s timeout
+
+VNC ARCHITECTURE:
+Docker Container contains:
+  - Xvfb (Virtual X Server on display :99, resolution 1280x720)
+  - Playwright Browser (controlled by Gemini AI)
+  - x11vnc Server (port 5900)
+  - noVNC + websockify (port 6080)
+User accesses via web browser at http://localhost:6080 to watch in real-time
+
+==============================================================================
+PROJECT STRUCTURE
+==============================================================================
+
+Root directory files:
+- gemini_computer_use.py: Main script that runs the Gemini+Playwright loop
+- test_navigation.py: Simple test script for Playwright functionality
+- test_gemini_api.py: Test script for Gemini API connection
+- Dockerfile: Docker image configuration with VNC support
+- docker-compose.yml: Docker Compose configuration
+- requirements.txt: Python dependencies
+- .env: Environment variables (GOOGLE_API_KEY, HEADLESS mode)
+- screenshots/: Directory where screenshots are saved
+
+Documentation files:
+- README.md: Main project documentation
+- SETUP.md: API key setup instructions
+- TESTING.md: Interactive testing workflow guide
+- VNC.md: VNC access and troubleshooting guide
+
+==============================================================================
+MAIN SCRIPT DETAILS (gemini_computer_use.py)
+==============================================================================
+
+KEY FUNCTIONS:
+
+initialize_browser(playwright):
+  - Reads HEADLESS environment variable (default: true)
+  - Launches Chromium browser with 1280x720 viewport
+  - Returns browser and page objects
+
+take_screenshot(page, step_number):
+  - Takes full-page screenshot as PNG
+  - Saves to /app/screenshots/ with timestamp
+  - Returns screenshot bytes and mime type
+  - Note: Compression code is commented out but available (JPEG, 512x288, reduces tokens by ~85%)
+
+execute_function_call(function_name, function_args, page):
+  - Routes function calls to appropriate handlers
+  - Currently handles: open_web_browser, navigate
+  - Logs warnings for unimplemented functions
+
+parse_function_call(response):
+  - Extracts function call from Gemini response
+  - Returns (function_call_part, function_name, function_args)
+  - Returns (None, None, None) if no function call found
+
+MAIN EXECUTION LOOP:
+1. Initialize Gemini client with API key from environment
+2. Configure model with computer_use tool (ENVIRONMENT_BROWSER)
+3. Set temperature to 0.0 for deterministic behavior
+4. Initialize Playwright browser
+5. Start conversation with user's initial prompt
+6. Loop up to 50 steps (safety limit):
+   - Log conversation history details (text chars, images, tokens estimate)
+   - Send entire conversation history to Gemini
+   - Parse response for function call
+   - If function call exists:
+     * Execute function via Playwright
+     * Take screenshot
+     * Get current URL
+     * Add assistant's function call to history
+     * Add function response (screenshot + URL) to history
+     * Continue loop
+   - If no function call:
+     * Task is complete, print any text response, break loop
+7. Close browser after 2 second wait
+
+CONVERSATION HISTORY FORMAT:
+- List of types.Content objects with role "user" or "model"
+- Each Content has parts array containing:
+  * types.Part(text=...) for text
+  * types.Part(function_response=...) for function responses with screenshots
+  * function_call parts from Gemini's responses
+
+LOGGING:
+- Detailed step-by-step logging with timestamps
+- Tracks: step number, conversation size, text characters, image count, estimated tokens
+- Shows function calls, arguments, URLs, screenshot info
+
+==============================================================================
+DOCKER CONFIGURATION
+==============================================================================
+
+DOCKERFILE KEY FEATURES:
+- Base: mcr.microsoft.com/playwright:v1.48.0-jammy
+- Installs: python3-pip, x11vnc, xvfb, fluxbox, wget, git
+- Clones noVNC and websockify for web-based VNC access
+- Creates /usr/local/bin/start-vnc.sh startup script that:
+  * Starts Xvfb on display :99
+  * Starts fluxbox window manager
+  * Starts x11vnc on port 5900
+  * Starts noVNC on port 6080
+  * Opens interactive bash shell
+- Sets DISPLAY=:99 environment variable
+- Creates /app/screenshots directory
+- Installs Python requirements
+
+DOCKER-COMPOSE CONFIGURATION:
+- Service name: playwright-browser
+- Container name: playwright-browser
+- Runs with: init=true, ipc=host (Playwright best practices)
+- stdin_open and tty for interactive shell
+- Command: /usr/local/bin/start-vnc.sh
+- Environment variables from .env file:
+  * GOOGLE_API_KEY: Gemini API key
+  * HEADLESS: false (for VNC mode) or true (for headless mode)
+  * DISPLAY: :99
+- Ports exposed:
+  * 5900: VNC server (for VNC clients)
+  * 6080: noVNC web interface (for browser access)
+- Volumes mounted:
+  * ./screenshots:/app/screenshots
+  * ./test_navigation.py:/app/test_navigation.py
+  * ./test_gemini_api.py:/app/test_gemini_api.py
+  * ./gemini_computer_use.py:/app/gemini_computer_use.py
+- Shared memory: 2gb (critical for Chrome stability)
+- Restart policy: no
+
+DOCKER BEST PRACTICES FOLLOWED:
+- --init flag: Prevents zombie processes
+- --ipc=host: Allows Chromium shared memory access
+- --shm-size=2gb: Sufficient memory for browser operations
+- cap_add: SYS_ADMIN commented out (may help with unusual errors)
+
+==============================================================================
+PYTHON DEPENDENCIES
+==============================================================================
+
+requirements.txt:
+- playwright==1.48.0: Browser automation library
+- pillow==10.4.0: Image processing (for screenshot compression if needed)
+- google-genai>=1.47.0: Google's Gemini API client
+- docker>=7.0.0: Docker Python SDK
+
+==============================================================================
+USAGE INSTRUCTIONS
+==============================================================================
+
+INITIAL SETUP:
+1. Create .env file with GOOGLE_API_KEY=your_api_key_here
+2. Build Docker image: docker-compose build
+3. Start container: docker-compose up -d
+
+RUNNING GEMINI COMPUTER USE:
+docker exec -it playwright-browser python3 gemini_computer_use.py "your prompt here"
+
+Examples:
+docker exec -it playwright-browser python3 gemini_computer_use.py "open nrk.no"
+docker exec -it playwright-browser python3 gemini_computer_use.py "go to wikipedia.org and search for Python"
+
+WATCHING WITH VNC:
+1. Ensure HEADLESS=false in docker-compose.yml
+2. Open browser to http://localhost:6080
+3. Run Gemini script and watch browser in real-time
+
+INTERACTIVE TESTING WORKFLOW (RECOMMENDED):
+1. docker-compose up -d (start container in background)
+2. docker exec -it playwright-browser /bin/bash (get shell inside container)
+3. Run any commands: python3 gemini_computer_use.py "...", ls, env, etc.
+4. exit (leave container running)
+5. docker-compose down (stop when completely done)
+
+QUICK COMMANDS:
+- Check container status: docker-compose ps
+- View logs: docker-compose logs -f
+- Restart: docker-compose restart
+- Stop: docker-compose down
+- Check screenshots: ls -la screenshots/
+
+==============================================================================
+TECHNICAL DETAILS
+==============================================================================
+
+GEMINI API CONFIGURATION:
+- Model: gemini-2.5-computer-use-preview-10-2025
+- Tool: types.Tool(computer_use=types.ComputerUse(environment=types.Environment.ENVIRONMENT_BROWSER))
+- Temperature: 0.0 (deterministic)
+- Conversation history includes:
+  * User text prompts
+  * Model function calls
+  * User function responses with base64-encoded screenshots
+- Screenshots sent as: {"mime_type": "image/png", "data": base64_string}
+- Function responses include: url (current page URL) and screenshot
+
+PLAYWRIGHT CONFIGURATION:
+- Browser: Chromium
+- Headless: Controlled by HEADLESS environment variable
+- Viewport: 1280x720
+- Navigation timeout: 30 seconds
+- Wait condition: domcontentloaded
+- Screenshot: Full page PNG format
+
+SCREENSHOTS:
+- Saved to /app/screenshots/ (mounted to host ./screenshots/)
+- Filename format: YYYYMMDD_HHMMSS_step_N.png
+- Full resolution: 1280x720 (or page height if taller)
+- Format: PNG (uncompressed currently, JPEG compression code available)
+
+SAFETY LIMITS:
+- Max steps per task: 50 (prevents infinite loops)
+- Navigation timeout: 30 seconds
+- Browser close wait: 2 seconds
+
+TOKEN OPTIMIZATION:
+- Screenshot compression available but currently disabled
+- If enabled: Resize to 512x288, save as JPEG quality 75
+- Compression reduces size by ~85% and tokens by ~85%
+- Trade-off: Lower resolution might affect Gemini's understanding
+
+==============================================================================
+ENVIRONMENT VARIABLES
+==============================================================================
+
+REQUIRED:
+- GOOGLE_API_KEY: Your Gemini API key from Google AI Studio
+  * Get from: https://aistudio.google.com/app/apikey
+  * Must have access to gemini-2.5-computer-use-preview-10-2025 model
+
+OPTIONAL:
+- HEADLESS: "true" or "false" (default: "true")
+  * "false": Browser visible via VNC at http://localhost:6080
+  * "true": Browser runs invisibly (faster, less resources)
+- DISPLAY: ":99" (set automatically in Docker, needed for VNC)
+
+STORAGE:
+- Store in .env file in project root
+- Format: KEY=value (no quotes needed)
+- .env is in .gitignore (never committed to Git)
+
+==============================================================================
+VNC ACCESS (WATCHING THE BROWSER)
+==============================================================================
+
+SETUP:
+1. Ensure HEADLESS=false in docker-compose.yml
+2. Rebuild and start: docker-compose build && docker-compose up -d
+3. Verify VNC is running: docker logs playwright-browser
+
+ACCESS METHODS:
+1. Web Browser (Recommended):
+   - URL: http://localhost:6080
+   - No password required
+   - Works in any modern browser
+2. VNC Client (Alternative):
+   - Host: localhost
+   - Port: 5900
+   - No password
+
+VNC CONFIGURATION:
+- Display: :99
+- Resolution: 1280x720x24
+- Window manager: fluxbox
+- VNC server: x11vnc
+- Web gateway: noVNC + websockify
+
+TROUBLESHOOTING VNC:
+- Blank screen: Check HEADLESS=false and restart container
+- Can't connect: Check ports 5900 and 6080 are exposed (docker ps)
+- Browser not appearing: Verify DISPLAY=:99 (docker exec playwright-browser printenv DISPLAY)
+
+SECURITY NOTE:
+- VNC has no password - for local development only
+- DO NOT expose ports 5900 or 6080 to the internet
+- Safe for localhost-only access
+
+==============================================================================
+ERROR HANDLING & DEBUGGING
+==============================================================================
+
+COMMON ISSUES:
+
+1. "GOOGLE_API_KEY environment variable not set"
+   Solution: Create .env file with GOOGLE_API_KEY=your_key
+
+2. "Browser closed" or "Connection refused"
+   Solution: Increase shared memory --shm-size=2gb (already in docker-compose.yml)
+
+3. Screenshots not appearing
+   Solution: Check directory exists and is mounted (docker-compose volumes)
+
+4. Permission denied on Linux
+   Solution: chmod 777 screenshots/
+
+5. Container exits immediately
+   Solution: Check logs (docker-compose logs) for errors
+
+6. Token limit error
+   Solution: Enable screenshot compression (uncomment lines 75-92 in gemini_computer_use.py)
+
+7. Navigation timeout
+   Solution: Increase timeout in execute_navigate function (currently 30000ms)
+
+DEBUGGING COMMANDS:
+- Check environment: docker exec playwright-browser env
+- Check API key: docker exec playwright-browser printenv GOOGLE_API_KEY
+- Check display: docker exec playwright-browser printenv DISPLAY
+- List screenshots: docker exec playwright-browser ls -la /app/screenshots
+- Check processes: docker exec playwright-browser ps aux
+- Interactive shell: docker exec -it playwright-browser /bin/bash
+- Python interactive: docker exec -it playwright-browser python3
+- View logs: docker-compose logs -f
+
+LOGGING ANALYSIS:
+- Each step logs: step number, conversation size, text chars, image count
+- Estimated tokens: text_chars/4 + images*20000 (rough estimate)
+- Function calls show name and arguments
+- Screenshots show file size and save location
+- Task completion indicated by "No function call returned"
+
+==============================================================================
+EXTENDING THE SYSTEM
+==============================================================================
+
+TO ADD NEW FUNCTIONS:
+
+1. Define function in Gemini API (declaratively via Computer Use tool - it provides functions automatically)
+2. Add handler in execute_function_call:
+   ```python
+   elif function_name == "new_function":
+       execute_new_function(page, function_args)
+   ```
+3. Implement handler:
+   ```python
+   def execute_new_function(page: Page, args: dict):
+       # Extract args
+       param = args.get('param')
+       # Perform action
+       page.some_action(param)
+       log(f"Executed new_function with {param}")
+   ```
+
+POTENTIAL FUNCTIONS TO ADD:
+- click: Click element by selector or coordinates
+- type_text: Type into input fields
+- scroll: Scroll page up/down
+- screenshot_element: Screenshot specific element
+- wait_for_element: Wait for element to appear
+- extract_text: Extract text from element
+- fill_form: Fill form fields
+- go_back/go_forward: Browser navigation
+- close_tab/new_tab: Tab management
+- hover: Hover over element
+
+CURRENT LIMITATIONS:
+- Only implements: open_web_browser, navigate
+- No element interaction (clicking, typing, scrolling)
+- No element extraction or analysis
+- No form filling
+- No multi-tab support
+- No JavaScript execution
+- No cookie/session management
+- No file uploads/downloads
+
+GEMINI DECIDES:
+- Which functions to call
+- When to call them
+- What arguments to provide
+- When task is complete
+The system just needs to implement the function handlers.
+
+==============================================================================
+API KEY SETUP
+==============================================================================
+
+GETTING GOOGLE GEMINI API KEY:
+1. Go to https://aistudio.google.com/app/apikey
+2. Sign in with Google account
+3. Click "Get API key" or "Create API key"
+4. Select existing project or create new one
+5. Copy API key immediately (won't be shown again)
+
+STORING API KEY:
+1. Create .env file in project root
+2. Add line: GOOGLE_API_KEY=your_actual_key_here
+3. Do not commit .env to version control (.gitignore includes it)
+
+TESTING API KEY:
+docker run --rm --init --ipc=host --env-file .env playwright-automation:latest python3 test_gemini_api.py
+
+Expected output:
+- API key found (length: 39 characters)
+- Client initialized successfully
+- Using model: gemini-2.5-computer-use-preview-10-2025
+- Response received successfully
+- Test completed successfully
+
+API USAGE LIMITS:
+- Free tier has limits (check https://ai.google.dev/pricing)
+- Rate limits apply
+- Monitor usage in Google Cloud Console
+- Implement retry logic for production use
+
+SECURITY BEST PRACTICES:
+- Never commit API keys to Git
+- Rotate keys regularly
+- Use separate keys for dev/production
+- Restrict keys by IP/referrer in Google Cloud Console
+- Monitor for unexpected usage
+
+==============================================================================
+CURRENT STATE & RECENT COMMITS
+==============================================================================
+
+GIT STATUS:
+- Current branch: main
+- Untracked: .obsidian/ directory
+
+RECENT COMMITS:
+1. 5720aac: Add continuous chat loop interface for interactive conversations
+2. e97b122: Add context logging and temporarily disable screenshot compression
+3. 00504d2: Fix token limit error by compressing screenshots in gemini_computer_use
+4. 5b03922: Add browser_automation tool with Gemini Computer Use integration
+5. d75534a: Add periodic checkpoint system for long-running streaming tasks
+
+DEVELOPMENT FOCUS:
+- Recently added continuous conversation loop
+- Added detailed logging for debugging token usage
+- Compression temporarily disabled (was causing token limit errors)
+- System is in active development/experimentation phase
+
+==============================================================================
+KEY INSIGHTS & DESIGN DECISIONS
+==============================================================================
+
+WHY DOCKER:
+- Consistent environment across platforms (macOS, Linux, Windows)
+- Playwright requires specific browser binaries and dependencies
+- VNC setup complex, easier in container
+- Isolation from host system
+- Easy cleanup and reproducibility
+
+WHY VNC:
+- Debugging: See what browser is actually doing
+- Demonstrations: Show AI controlling browser in real-time
+- Education: Understand how Gemini makes decisions
+- Trust: Verify actions before deploying headless
+
+WHY CONTINUOUS LOOP:
+- Computer Use requires iterative process
+- Each action needs feedback (screenshot + URL)
+- Agent decides when task is complete
+- Mimics human computer interaction pattern
+
+WHY SCREENSHOTS:
+- Gemini needs visual feedback to understand current state
+- Text alone insufficient for complex web pages
+- Screenshots enable visual reasoning
+- Critical for Computer Use API functionality
+
+WHY CONVERSATION HISTORY:
+- Context needed for multi-step tasks
+- Gemini learns from previous actions
+- Function responses inform next decisions
+- Enables complex task planning
+
+TOKEN CONSIDERATIONS:
+- Full resolution screenshots (1280x720 PNG) are large
+- Each screenshot ~500KB = ~20,000 tokens estimate
+- Conversation history grows with each step
+- Compression available but disabled (caused errors in testing)
+- Trade-off: Image quality vs. token usage vs. task success
+
+SAFETY LIMITS:
+- Max 50 steps prevents infinite loops
+- Timeouts prevent hanging
+- Logging helps identify issues
+- Container isolation limits damage from errors
+
+==============================================================================
+TESTING RECOMMENDATIONS
+==============================================================================
+
+BEFORE RUNNING:
+- Verify .env file exists with GOOGLE_API_KEY
+- Build Docker image: docker-compose build
+- Start container: docker-compose up -d
+- Check container running: docker-compose ps
+- Check VNC (optional): docker logs playwright-browser
+
+BASIC TESTS:
+1. Simple navigation: "open nrk.no"
+2. Verify screenshot saved: ls -la screenshots/
+3. Check logs for errors: docker-compose logs
+4. View in VNC: http://localhost:6080
+
+ITERATIVE TESTING:
+1. docker-compose up -d
+2. docker exec -it playwright-browser /bin/bash
+3. Run multiple tests with different prompts
+4. Check screenshots between runs
+5. Modify code on host (volumes mounted)
+6. Re-run without rebuilding
+7. exit when done
+8. docker-compose down
+
+DEBUGGING WORKFLOW:
+1. Enable detailed logging (already present)
+2. Run in VNC mode to watch visually
+3. Check conversation history logs
+4. Examine screenshots in ./screenshots/
+5. Use docker logs for container issues
+6. Use docker exec for environment inspection
+
+==============================================================================
+PRODUCTION CONSIDERATIONS
+==============================================================================
+
+CURRENT STATE: Development/experimental prototype
+
+FOR PRODUCTION USE, CONSIDER:
+- Error handling and retry logic
+- Rate limiting and backoff for API calls
+- Cost monitoring (API usage, compute)
+- Screenshot optimization (compression, resolution)
+- Security hardening (secrets management, container security)
+- Monitoring and alerting
+- Graceful degradation when API unavailable
+- Task timeout management
+- Result validation
+- Logging and audit trail
+- Multi-browser support
+- Parallel execution
+- Task queuing system
+- State persistence
+- Crash recovery
+
+SECURITY CONCERNS:
+- API keys in environment variables (use secrets manager in production)
+- No VNC password (add authentication for production)
+- Container runs as root (use non-root user in production)
+- No input validation on prompts
+- No rate limiting on API calls
+- No access controls
+- Mounted volumes with broad permissions
+
+SCALABILITY LIMITATIONS:
+- Single browser instance
+- Sequential task execution
+- No task queue
+- Memory accumulation in conversation history
+- Screenshot storage grows unbounded
+- No cleanup of old screenshots
+
+NOT PRODUCTION-READY: This is a development prototype demonstrating Gemini Computer Use API integration with Playwright.
+
+==============================================================================
+USEFUL COMMANDS REFERENCE
+==============================================================================
+
+CONTAINER MANAGEMENT:
+docker-compose build                    # Build image
+docker-compose up -d                    # Start in background
+docker-compose up                       # Start with logs
+docker-compose down                     # Stop and remove
+docker-compose restart                  # Restart container
+docker-compose ps                       # Check status
+docker-compose logs -f                  # Follow logs
+
+INTERACTIVE USE:
+docker exec -it playwright-browser /bin/bash                    # Get shell
+docker exec playwright-browser python3 gemini_computer_use.py "prompt"  # Run script
+docker exec playwright-browser ls -la /app/screenshots         # List screenshots
+docker exec playwright-browser env                              # View environment
+docker exec playwright-browser python3 test_navigation.py      # Test Playwright
+
+FILE OPERATIONS:
+docker cp local-file.py playwright-browser:/app/                # Copy to container
+docker cp playwright-browser:/app/output.txt ./                # Copy from container
+
+DEBUGGING:
+docker logs playwright-browser          # View container logs
+docker inspect playwright-browser       # Inspect container
+docker ps                               # List running containers
+docker images                           # List images
+
+CLEANUP:
+docker-compose down                     # Stop container
+docker rmi playwright-automation:latest # Remove image
+rm -rf screenshots/*                    # Delete screenshots
+docker system prune                     # Clean up Docker
+
+VNC:
+http://localhost:6080                   # Web browser access
+localhost:5900                          # VNC client access
+
+==============================================================================
+CONTEXT FOR AI ASSISTANTS
+==============================================================================
+
+IF YOU ARE AN AI ASSISTANT READING THIS:
+
+This project is a working prototype of Google Gemini's Computer Use API integrated with Playwright browser automation. The core loop is:
+1. Send prompt and conversation history to Gemini
+2. Gemini returns function call
+3. Execute function with Playwright
+4. Take screenshot and get URL
+5. Send screenshot + URL back to Gemini
+6. Repeat until Gemini says task is done
+
+The system currently only implements basic navigation (open browser, go to URL). The Gemini Computer Use API automatically provides browser control functions, and this code just needs to implement the handlers.
+
+Key files:
+- gemini_computer_use.py: Main loop implementation
+- docker-compose.yml: Container configuration
+- Dockerfile: Image with Playwright + VNC
+
+The conversation history grows with each step and includes base64-encoded screenshots, which consume many tokens. Screenshot compression is available but currently disabled.
+
+The system runs in Docker for consistency and isolation. VNC is available for watching the browser in real-time at http://localhost:6080 when HEADLESS=false.
+
+For extending: Add new function handlers in execute_function_call() and implement the Playwright actions. Gemini will automatically discover and use them.
+
+Main limitations: Only implements navigate/open functions, no element interaction, single browser instance, no production hardening.
+
+This is research/development code, not production-ready. Treat it as a proof-of-concept for AI-controlled browser automation.
+
+==============================================================================
+END OF CONTEXT DOCUMENT
+==============================================================================
